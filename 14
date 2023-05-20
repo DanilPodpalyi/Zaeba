@@ -1,0 +1,130 @@
+import cv2  # opencv - библиотека для работы с компьютерным зрением
+import numpy as np  # NumPy - библиотека для работы с массивами
+import time  # библиотека для работы с временными данными
+
+# Загрузка НС Yolo
+net = cv2.dnn.readNet("yolo-coco/yolov3-tiny.weights", "yolo-coco/yolov3.cfg")
+classes = []  # Объявления пустого списка для классов
+with open("yolo-coco/coco.names", "r") as f:
+    classes = [line.strip() for line in f.readlines()]
+# получения списка слоев НС
+layer_names = net.getLayerNames()
+# получившийся список слоев одномерный, поэтому в исходном коде
+# обращение ко второму уровню (измерению) массива (списка) не нужно,
+# а значит [0] исключается
+# получившийся в результате выполнения цикла массив, содержащий выходные
+# нейроны помещаем в переменную
+# output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
+# Генерируем случайным образом цвета рамки
+colors = np.random.uniform(0, 255, size=(len(classes), 3))
+
+# Создание видеозахвата с веб-камеры
+cap = cv2.VideoCapture(0)
+
+# Загрузка шрифта  в формате OpenCV
+font = cv2.FONT_HERSHEY_PLAIN
+# Время старта (текущее время) в переменную
+starting_time = time.time()
+# объявление переменной id кадра
+frame_id = 0
+
+# Цикл выполнения детектирования
+while True:
+    # Распаковка переменной с кадров и помещение кадра в переменную frame
+    _, frame = cap.read()
+    # Переменная-счетчик кадров
+    frame_id += 1
+    # распаковка переменной с формой массива на длину, ширину и каналы
+    height, width, channels = frame.shape
+
+    # Определения объектов - здесь выполняется прогон
+    # кадра через YOLO.
+    # Вначале Функция blobFromImage
+    # возвращает 4-х мерный массив с помещением результата
+    # в переменную blob
+    blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+    # Далее полученный массив передается на вход НС
+    net.setInput(blob)
+    # Здесь уже осуществляется прямой прогон НС, где
+    # выходные данные помещаются в переменную outs
+    outs = net.forward(output_layers)
+
+    # Показ информации на экране
+    # Объявление переменных - пустых списков с
+    # ids классов обнаруженных объектов,
+    class_ids = []
+    # уверенности НС в долях единицы в полученных результатах и
+    confidences = []
+    # рамок обнаруженных объектов
+    boxes = []
+    # Перебор выхода НС для извлечения результатов
+    for out in outs:
+        for detection in out:
+            # извлечение информации об обнаруженном объекте
+            scores = detection[5:]
+            # извлечение id класса объекта
+            class_id = np.argmax(scores)
+            # извлечение "уверенности" обнаруженном объекте
+            confidence = scores[class_id]
+            # если "уверенность" больше 20%, то
+            if confidence > 0.2:
+                # объект считается обнаруженным
+                # вычисляется центр объекта и помещается в переменные
+                # стоит напомнить, что переменные width
+                # и height - это шири и длина всего кадра
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                # вычисляется ширина и высота объекта и помещается в
+                # соответствующие переменные
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+                # Вычисляются координаты рамки объекта
+                # и помещаются в переменную
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+                # Рамка, "уверенность" и id класса
+                # добавляются в соответствующие списки
+                boxes.append([x, y, w, h])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+
+    # Создание переменной с рамками в формате OpenCV
+    indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.4, 0.3)
+
+    # Цикл перебора рамок для вывода текста
+    for i in range(len(boxes)):
+        if i in indexes:
+            # Распаковка размеров рамки
+            x, y, w, h = boxes[i]
+            # Получение названия класса по id
+            label = str(classes[class_ids[i]])
+            # Извлечение "уверенности" по рамке
+            confidence = confidences[i]
+            # Извлечение цвета обнаруженного класса
+            color = colors[class_ids[i]]
+            # Создание рамки
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            # Создание широкой полоски над рамкой
+            cv2.rectangle(frame, (x, y), (x + w, y + 30), color, -1)
+            # Помещение текста в формате OpenCV над рамкой
+            cv2.putText(frame, label + " " + str(round(confidence, 2)), (x, y + 30), font, 3, (255, 255, 255), 3)
+
+    # Вычисляется общее время работы
+    elapsed_time = time.time() - starting_time
+    # Вычисляется количество FPS детектирования, путем деления
+    # счетчика кадров на время работы
+    fps = frame_id / elapsed_time
+    # Вывод FPS детектирования
+    cv2.putText(frame, "FPS: " + str(round(fps, 2)), (10, 50), font, 3, (255, 255, 255), 3)
+    # Вывод изображения
+    cv2.imshow("Image", frame)
+    # Если нажата клавиша "q", то программа завершается и
+    key = cv2.waitKey(1)
+    if key == 113:
+        break
+# Завершение программы и закрытие всех окон
+cap.release()
+cv2.destroyAllWindows()
